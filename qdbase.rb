@@ -12,26 +12,25 @@ module Qdbase
 
     def insert(data)
       id = data['id']
-      object = @objects[canonize_id(id)] if id
+      object = get_object(id)
       if object
         [nil, nil] # don't allow create if same id exist
       else
         id = canonize_id(SecureRandom::uuid) unless id # reuse id
-        @objects[id] = data.merge!(id: id, created_at: Time.now, updated_at: Time.now)
+        @objects[id] = data.merge!(id: id, created_at: (now = Time.now), updated_at: now)
         [id, @objects[id]]
       end
     end
 
     def get(id)
-      object = @objects[canonize_id(id)] if id
+      object = get_object(id)
       [id, object]
     end
 
     def update(id, data)
-      object = @objects[canonize_id(id)] if id
+      object = get_object(id)
       if object && data
-        object.merge!(data).merge!(updated_at: Time.now)
-        object['id'] = id
+        object.merge!(data).merge!(id: id, updated_at: Time.now)
         [id, object]
       else
         [nil, nil]
@@ -43,6 +42,10 @@ module Qdbase
     end
 
     private
+    def get_object(id)
+      @objects[canonize_id(id)] if id
+    end
+
     def canonize_id(id)
       id.gsub('-','').downcase
     end
@@ -58,8 +61,7 @@ module Qdbase
 
     private
     def new_collection(name)
-      @collections[name] = (collection = Collection.new(name))
-      collection
+      @collections[name] = Collection.new(name)
     end
   end
 
@@ -69,47 +71,40 @@ module Qdbase
     end
 
     post "/:collection" do
-      collection = settings.database.collection(params[:collection])
+      collection = get_collection
       data = ::JSON.parse(params["data"])
       id, object = collection.insert(data)
-      if id
-        status 201
-        headers "Location" => "/#{params[:collection]}/#{id}"
-        body object.to_json
-      else
-        status 409 # conflict
-      end
+      id ? set_response(201, "/#{params[:collection]}/#{id}", object) : status(409) # conflict
     end
 
     get "/:collection/:id" do
-      collection = settings.database.collection(params[:collection])
+      collection = get_collection
       id, object = collection.get(params[:id])
-      if object
-        status 200
-        headers "Location" => "/#{params[:collection]}/#{id}"
-        body object.to_json
-      else
-        status 404
-      end
+      object ? set_response(200, "/#{params[:collection]}/#{id}", object) : status(404)
     end
 
     put "/:collection/:id" do
-      collection = settings.database.collection(params[:collection])
+      collection = get_collection
       data = ::JSON.parse(params[:data])
       id, object = collection.update(params[:id], data) if data
-      if id
-        status 200
-        headers "Location" => "/#{params[:collection]}/#{id}"
-        body object.to_json
-      else
-        status 404 # not found
-      end
+      id ? set_response(200, "/#{params[:collection]}/#{id}", object) : status(404)
     end
 
     delete "/:collection/:id" do
       collection = settings.database.collection(params[:collection])
       collection.destroy(params[:id])
       status 200 # delete is idempotent so success even if object not found
+    end
+
+    private
+    def get_collection
+      settings.database.collection(params[:collection])
+    end
+
+    def set_response(status_code, location=nil, object=nil)
+      status status_code
+      headers "Location" => location if location
+      body object.to_json if object
     end
   end
 end

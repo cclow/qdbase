@@ -5,6 +5,7 @@ require 'rack/test'
 require 'minitest/spec'
 require 'minitest/autorun'
 require 'qdbase'
+require 'faker'
 
 include Rack::Test::Methods
 
@@ -12,8 +13,19 @@ def app
   Qdbase::App.new
 end
 
+def returned_uri(last_response)
+  last_response.header['Location']
+end
+
+def verify_same_attributes(data, object)
+  object['name'].must_equal(data['name'])
+  object['email'].must_equal(data['email'])
+end
+
 describe 'qdbase' do
   before do
+    @user_1 = {"name" => Faker::Name.name, "email" => Faker::Internet.email}
+    @user_2 = {"name" => Faker::Name.name, "email" => Faker::Internet.email}
     @no_such_object_uri = "/users/no-such-object"
   end
 
@@ -37,26 +49,24 @@ describe 'qdbase' do
 
   describe 'POST new object' do
     before do
-      @user = {"name" => "John Doe"}
-      post '/users',  data: @user.to_json
+      post '/users',  data: @user_1.to_json
     end
     it "should return created" do
       last_response.status.must_equal 201
     end
     it "should return the object location" do
-      last_response.header['Location'].wont_be_empty
-      last_response.header['Location'].must_match %r|/users/.*|
+      returned_uri(last_response).wont_be_empty
+      returned_uri(last_response).must_match %r|/users/.*|
     end
     it "should return the object" do
       object = JSON.parse(last_response.body)
-      object['name'].must_equal(@user['name'])
+      verify_same_attributes(object, @user_1)
     end
 
     describe "with already existing id" do
       before do
-        id = last_response.header['Location'].gsub('/users/', '')
-        @user1 = {"id" => id, "name" => "Jane Foe"}
-        post '/users', data: @user1.to_json
+        id = returned_uri(last_response).gsub('/users/', '')
+        post '/users', data: @user_2.merge(id: id).to_json
       end
 
       it "should return with conflict status" do
@@ -67,50 +77,44 @@ describe 'qdbase' do
 
   describe 'GET object' do
     before do
-      @user = {"name" => "John Doe"}
-      post '/users', data: @user.to_json
-      get last_response.header['Location']
+      post '/users', data: @user_1.to_json
+      get returned_uri(last_response)
     end
 
     it "should return the saved object" do
       object = JSON.parse(last_response.body)
-      object['name'].must_equal @user['name']
+      verify_same_attributes(object, @user_1)
     end
     it "should return the object location" do
-      last_response.header['Location'].wont_be_empty
-      last_response.header['Location'].must_match %r|/users/.*|
+      returned_uri(last_response).wont_be_empty
+      returned_uri(last_response).must_match %r|/users/.*|
     end
   end
 
   describe 'PUT "/:collection/:id"' do
-    before do
-      @user = {"name" => "John Doe"}
-      @user1 = {"name" => "Jane Doe"}
-    end
-
     describe "for existing object" do
       before do
-        post '/users',  data: @user.to_json
-        put last_response.header['Location'], data: @user1.to_json
+        post '/users',  data: @user_1.to_json
+        put returned_uri(last_response), data: @user_2.to_json
       end
 
       it "should return 200" do
         last_response.status.must_equal 200
       end
       it "should update the object" do
-        get last_response.header['Location']
+        get returned_uri(last_response)
         object = JSON.parse(last_response.body)
-        object['name'].must_equal @user1['name']
+        verify_same_attributes(object, @user_2)
       end
       it "should return the object location" do
-        last_response.header['Location'].wont_be_empty
-        last_response.header['Location'].must_match %r|/users/.*|
+        returned_uri(last_response).wont_be_empty
+        returned_uri(last_response).must_match %r|/users/.*|
       end
     end
 
     describe "for non existing object" do
       before do
-        put @no_such_object_uri, data: @user1.to_json
+        put @no_such_object_uri, data: @user_2.to_json
       end
 
       it "should return 404" do
@@ -127,10 +131,8 @@ describe 'qdbase' do
 
     describe "for existing object" do
       before do
-        @user = {"name" => "John Doe"}
-        post '/users',  data: @user.to_json
-        @uri = last_response.header['Location']
-        delete @uri
+        post '/users',  data: @user_1.to_json
+        delete (@uri = returned_uri(last_response))
       end
 
       it "should return 200" do
